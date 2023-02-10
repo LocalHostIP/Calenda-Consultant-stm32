@@ -65,7 +65,7 @@ static void MX_TIM2_Init(void);
 #define LCD_RSE_PORT 		GPIOC
 #define LCD_RS_PIN 			GPIO_PIN_8
 #define LCD_E_PIN 			GPIO_PIN_6
-#define LCD_LENGTH	 		14
+#define LCD_LENGTH	 		15
 
 LCD_PinType LCD_DATA_PINS[] = {GPIO_PIN_13,GPIO_PIN_14,GPIO_PIN_15,GPIO_PIN_1};
 LCD_Struct_t LCD;
@@ -124,7 +124,7 @@ int main(void)
   HAL_Delay(500);
   LCD_XY(&LCD,0,0);
   HAL_Delay(500);
-  LCD_String(&LCD,"INICIANDO...");
+  LCD_String(&LCD,"LOADING...");
 
   /* get events */
   updateEvents();
@@ -227,7 +227,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 9999;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 10999;
+  htim2.Init.Period = 60999;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -333,7 +333,7 @@ void updateEvents(){
   /* Load Info */
   //Ask for info
   memset(send_buffer,0,LENGTH_SBUFFER);
-  strcpy(send_buffer,"e");
+  strcpy((char *) send_buffer,"e");
   HAL_UART_Transmit(&huart2,send_buffer,LENGTH_SBUFFER,5000);
   //Get info
   memset(read_buffer,0,LENGTH_RBUFFER);
@@ -344,21 +344,21 @@ void updateEvents(){
 
   //Process data
   //get length of summary
-  unsigned char *temp = strchr(read_buffer,'\t');
+  unsigned char *temp = (unsigned char *) strchr((char *) read_buffer,'\t');
   //if temp == NULL should throw error on error on data format
   int final_summary = (int)(temp-read_buffer);
   //Copy read_buffer to summary
   memset(LCD_Text[0],0,LCD_LENGTH+1);
   memset(LCD_Text[1],0,LCD_LENGTH+1);
   //If no data received show error
-  if (strlen(read_buffer)>0){
+  if (strlen((char *) read_buffer)>0){
 	  if(LCD_LENGTH < final_summary){
-		  strncpy(LCD_Text[0],read_buffer,LCD_LENGTH);
+		  strncpy(LCD_Text[0],(char *) read_buffer,LCD_LENGTH);
 	  }else{
-		  strncpy(LCD_Text[0],read_buffer,final_summary);
+		  strncpy(LCD_Text[0],(char *) read_buffer,final_summary);
 	  }
 	  //Get date
-	  strcpy(LCD_Text[1],"Sin fecha");
+	  strcpy(LCD_Text[1],"No date");
   }else{
 	  strcpy(LCD_Text[0],"Error!");
 	  strcpy(LCD_Text[1],"No Connection");
