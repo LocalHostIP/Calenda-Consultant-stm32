@@ -45,6 +45,7 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart2;
+DMA_HandleTypeDef hdma_usart2_rx;
 
 /* USER CODE BEGIN PV */
 
@@ -53,6 +54,7 @@ UART_HandleTypeDef huart2;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
@@ -87,7 +89,7 @@ int fUpdateLCD=0;
 #define LENGTH_SBUFFER 1
 unsigned char read_buffer[LENGTH_RBUFFER+1];
 unsigned char send_buffer[LENGTH_SBUFFER+1];
-void updateEvents();
+void processBufferEvents();
 void putLCDEvents();
 //Flag to indicate when to update events in super loop
 int fUpdateEvents=0;
@@ -141,6 +143,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART2_UART_Init();
   MX_TIM2_Init();
   MX_TIM3_Init();
@@ -176,11 +179,11 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  /* USER CODE END WHILE */
+    /* USER CODE END WHILE */
 
-	  /* USER CODE BGEEGIN 3 */
+    /* USER CODE BEGIN 3 */
 
-	  /*Code for Joystick*/
+	  /*Code for Joystick */
 	  HAL_ADC_Start(&hadc1);
 	  val_joystick = HAL_ADC_GetValue(&hadc1);
 
@@ -205,12 +208,23 @@ int main(void)
 
 	  /* Check for update flags */
 	  if (fUpdateEvents){
-		  updateEvents();
-		  fUpdateEvents=0;
+		//Ask for info
+		memset(send_buffer,0,LENGTH_SBUFFER);
+		strcpy((char *) send_buffer,"e");
+		HAL_UART_Transmit(&huart2,send_buffer,LENGTH_SBUFFER,5000);
+		//Get info
+		memset(read_buffer,0,LENGTH_RBUFFER);
+
+		HAL_UART_DMAStop(&huart2);
+		HAL_UARTEx_ReceiveToIdle_DMA(&huart2, read_buffer, LENGTH_RBUFFER);
+		//Disable half data transfered
+		__HAL_DMA_DISABLE_IT(&hdma_usart2_rx,DMA_IT_HT);
+
+		fUpdateEvents=0;
 	  }
 	  if (fUpdateLCD){
-		  updateLCD();
-		  fUpdateLCD=0;
+		updateLCD();
+		fUpdateLCD=0;
 	  }
 
 	  //Dummy code for button
@@ -467,6 +481,22 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -499,16 +529,10 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-void updateEvents(){
-	/* Load Info */
-	//Ask for info
-	memset(send_buffer,0,LENGTH_SBUFFER);
-	strcpy((char *) send_buffer,"e");
-	HAL_UART_Transmit(&huart2,send_buffer,LENGTH_SBUFFER,5000);
-	//Get info
-	memset(read_buffer,0,LENGTH_RBUFFER);
-	HAL_UART_Receive(&huart2, read_buffer, LENGTH_RBUFFER,5000);
+void processBufferEvents(){
+
 	/*
+	 * Save received buffer to array of structures of events
 	* Data format: summary_1\tdate_1\tsummary_2\tdate_2...
 	*/
 
@@ -601,7 +625,7 @@ void updateLCDStrings(const char *s1,const char *s2){
 	strcpy((char *) LCD_Text[0],s1);
 	strcpy((char *) LCD_Text[1],s2);
 
-	updateLCD();
+	fUpdateEvents=1;
 }
 
 void updateLCD(){
@@ -632,10 +656,17 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   if (htim == &htim2 )
   {
 	//Update Events and LCD
-    fUpdateLCD=1;
     fUpdateEvents=1;
   }
 }
+
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size){
+	if(huart->Instance==USART2){
+		//Procces data
+		processBufferEvents();
+	}
+}
+
 /* USER CODE END 4 */
 
 /**
