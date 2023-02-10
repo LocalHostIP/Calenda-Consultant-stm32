@@ -22,7 +22,6 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "LCD.h"
-#include "LCD.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -41,6 +40,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart2;
 
@@ -53,6 +53,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -71,18 +72,34 @@ LCD_PinType LCD_DATA_PINS[] = {GPIO_PIN_13,GPIO_PIN_14,GPIO_PIN_15,GPIO_PIN_1};
 LCD_Struct_t LCD;
 //Text that goes to LCD when updating function is called
 char LCD_Text[2][LCD_LENGTH+1];
+//Reprint in LCD
 void updateLCD();
+//Update text in LCD
+void updateLCDStrings();
 //Flag to indicate when to update screen in super loop
 int fUpdateLCD=0;
 
 /* USART2 Variables */
-#define LENGTH_RBUFFER 100
+#define LENGTH_RBUFFER 300
 #define LENGTH_SBUFFER 1
 unsigned char read_buffer[LENGTH_RBUFFER+1];
 unsigned char send_buffer[LENGTH_SBUFFER+1];
 void updateEvents();
 //Flag to indicate when to update events in super loop
 int fUpdateEvents=0;
+
+//Events
+//Struct to save summary and date of all events
+typedef struct{
+	unsigned char summary[LCD_LENGTH+1];
+	unsigned char date[LCD_LENGTH+1];
+}Events;
+
+#define MAX_EVENTS 5
+int c_maxEvent = 0;
+int selected_event = 1;
+//List of events
+Events events[MAX_EVENTS];
 
 /* USER CODE END 0 */
 
@@ -116,10 +133,11 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_TIM2_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 
   /* LCD INIT */
-  HAL_Delay(500);
+  HAL_Delay(1000);
   LCD = LCD_Create(LCD_DATA_PORT, LCD_DATA_PINS, LCD_RSE_PORT, LCD_RS_PIN, LCD_RSE_PORT, LCD_E_PIN);
   HAL_Delay(500);
   LCD_XY(&LCD,0,0);
@@ -127,13 +145,14 @@ int main(void)
   LCD_String(&LCD,"LOADING...");
 
   /* get events */
-  updateEvents();
   fUpdateLCD=1;
+  fUpdateEvents=1;
 
-
-  //Start update timmer
-  //HAL_TIM_Base_Start(&
+  updateEvents();
+  //Start update events timmer
   HAL_TIM_Base_Start_IT(&htim2);
+  //Start update LCD timmer
+  HAL_TIM_Base_Start_IT(&htim3);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -227,7 +246,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 9999;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 60999;
+  htim2.Init.Period = 30999;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -260,6 +279,64 @@ static void MX_TIM2_Init(void)
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 9999;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 10999;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_OC_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_TIMING;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_OC_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
 
 }
 
@@ -339,47 +416,123 @@ void updateEvents(){
   memset(read_buffer,0,LENGTH_RBUFFER);
   HAL_UART_Receive(&huart2, read_buffer, LENGTH_RBUFFER,5000);
   /*
-   * Data format: summary\tdate hour
+   * Data format: summary_1\tdate_1\tsummary_2\tdate_2...
    */
 
   //Process data
-  //get length of summary
-  unsigned char *temp = (unsigned char *) strchr((char *) read_buffer,'\t');
-  //if temp == NULL should throw error on error on data format
-  int final_summary = (int)(temp-read_buffer);
-  //Copy read_buffer to summary
-  memset(LCD_Text[0],0,LCD_LENGTH+1);
-  memset(LCD_Text[1],0,LCD_LENGTH+1);
-  //If no data received show error
+  const int length_buffer = strlen((char *) read_buffer);
+  unsigned char *start_summary,*start_date;
+  unsigned char *end_date;
+  int final_summary_index,final_date_index;
+
+  //If data received
   if (strlen((char *) read_buffer)>0){
-	  if(LCD_LENGTH < final_summary){
-		  strncpy(LCD_Text[0],(char *) read_buffer,LCD_LENGTH);
-	  }else{
-		  strncpy(LCD_Text[0],(char *) read_buffer,final_summary);
+	  //start in read_buffer
+	  start_summary = read_buffer;
+	  for (c_maxEvent=0; c_maxEvent < MAX_EVENTS ;c_maxEvent++){
+		  //Get starts of summary and date
+
+		  //Check first character where \t appears, that is start of date
+		  start_date = (unsigned char *) strchr((char *) start_summary+1,'\t');
+		  //Check if start date was not found
+		  if (start_date==0){
+			  //If not found then data is not complete, terminate and do not add this event
+			  c_maxEvent--;
+			  if (c_maxEvent<0)
+				  c_maxEvent=0;
+			  break;
+		  }
+
+		  //Get end of date
+		  end_date = (unsigned char *) strchr((char *) start_date+1,'\t');
+
+		  //Get lengths
+		  final_summary_index = (int)(start_date-start_summary);
+		  	  //If end_date was found then calculate length
+		  if (end_date!=0){
+			  final_date_index = (int)(end_date - start_date);
+		  }else{
+			  //If end_date was found (\t), then end of date will be end of buffer
+			  final_date_index = (int)(read_buffer+ length_buffer - start_date);
+		  }
+
+		  //Copy data to structure
+		  	  //Copy summary
+		  	  	  //Clean summary
+		  memset(events[c_maxEvent].summary,0,LCD_LENGTH);
+		  //Check to not pass over LCD_LENGTH
+		  if(LCD_LENGTH < final_summary_index){
+			  strncpy((char *) events[c_maxEvent].summary,(char *) start_summary,LCD_LENGTH);
+		  }else{
+			  strncpy((char *) events[c_maxEvent].summary,(char *) start_summary,final_summary_index);
+		  }
+		  	  //Copy date
+		  memset(events[c_maxEvent].date,0,LCD_LENGTH);
+		  if(LCD_LENGTH < final_date_index){
+			  strncpy((char *) events[c_maxEvent].date,(char *) (start_date+1),LCD_LENGTH);
+		  }else{
+			  strncpy((char *) events[c_maxEvent].date,(char *) (start_date+1),final_date_index-1);
+		  }
+
+		  //Get next start for next summary
+		  start_summary = end_date+1;
+
+		  //If no new \t was found then terminate
+		  if (end_date==0){
+			  c_maxEvent++;
+			  break;
+		  }
 	  }
-	  //Get date
-	  strcpy(LCD_Text[1],"No date");
-  }else{
-	  strcpy(LCD_Text[0],"Error!");
-	  strcpy(LCD_Text[1],"No Connection");
   }
+  else{
+	  //If no data received
+	  c_maxEvent=0;
+  }
+  //If selected event is greater than now updated max number of events received, then set selected to max
+  if (selected_event>c_maxEvent){
+	  selected_event=c_maxEvent;
+  }
+
+  updateLCDStrings();
+}
+
+void updateLCDStrings(){
+	//Clean LCD strings
+	memset(LCD_Text[0],0,LCD_LENGTH+1);
+	memset(LCD_Text[1],0,LCD_LENGTH+1);
+
+	//If got any events
+	if (c_maxEvent>0){
+		strcpy((char *) LCD_Text[0],(char *) events[selected_event].summary);
+		strcpy((char *) LCD_Text[1],(char *) events[selected_event].date);
+	}else{
+		strcpy(LCD_Text[0],"No events");
+		strcpy(LCD_Text[1],"Received!");
+	}
+
+	updateLCD();
 }
 
 void updateLCD(){
-  //Update Screen with receive buffer
-  LCD_Command(&LCD, LCD_CLEAR_SCREEN);
-  LCD_XY(&LCD,0,0);
-  LCD_String(&LCD,LCD_Text[0]);
-  LCD_XY(&LCD,1,0);
-  LCD_String(&LCD,LCD_Text[1]);
+	//Update LCD
+	LCD_Command(&LCD, LCD_CLEAR_SCREEN);
+	LCD_XY(&LCD,0,0);
+	LCD_String(&LCD,LCD_Text[0]);
+	LCD_XY(&LCD,1,0);
+	LCD_String(&LCD,LCD_Text[1]);
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   // Check which version of the timer triggered this callback and toggle LED
+  if (htim == &htim3){
+	 //Update only LCD
+	 fUpdateLCD=1;
+	 HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+  }
   if (htim == &htim2 )
   {
-    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+	//Update Events and LCD
     fUpdateLCD=1;
     fUpdateEvents=1;
   }
