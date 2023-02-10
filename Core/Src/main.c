@@ -209,17 +209,12 @@ int main(void)
 	  /* Check for update flags */
 	  if (fUpdateEvents){
 		//Ask for info
+		//Clean buffers
 		memset(send_buffer,0,LENGTH_SBUFFER);
-		strcpy((char *) send_buffer,"e");
-		HAL_UART_Transmit(&huart2,send_buffer,LENGTH_SBUFFER,5000);
-		//Get info
 		memset(read_buffer,0,LENGTH_RBUFFER);
 
-		HAL_UART_DMAStop(&huart2);
-		HAL_UARTEx_ReceiveToIdle_DMA(&huart2, read_buffer, LENGTH_RBUFFER);
-		//Disable half data transfered
-		__HAL_DMA_DISABLE_IT(&hdma_usart2_rx,DMA_IT_HT);
-
+		strcpy((char *) send_buffer,"e");
+		HAL_UART_Transmit_IT(&huart2,send_buffer,LENGTH_SBUFFER);
 		fUpdateEvents=0;
 	  }
 	  if (fUpdateLCD){
@@ -643,6 +638,16 @@ void putLCDEvents(){
 		updateLCDStrings((char *) events[selected_event].summary,(char *) events[selected_event].date);
 	}else{
 		updateLCDStrings("No events","Received!");
+	}
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart){
+	if(huart->Instance==USART2){
+		//Get info
+		HAL_UART_DMAStop(&huart2);
+		HAL_UARTEx_ReceiveToIdle_DMA(&huart2, read_buffer, LENGTH_RBUFFER);
+		//Disable half data transfered
+		__HAL_DMA_DISABLE_IT(&hdma_usart2_rx,DMA_IT_HT);
 	}
 }
 
