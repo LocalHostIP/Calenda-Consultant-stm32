@@ -39,6 +39,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
@@ -54,6 +56,7 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -75,7 +78,7 @@ char LCD_Text[2][LCD_LENGTH+1];
 //Reprint in LCD
 void updateLCD();
 //Update text in LCD
-void updateLCDStrings();
+void updateLCDStrings(const char *s1,const char *s2);
 //Flag to indicate when to update screen in super loop
 int fUpdateLCD=0;
 
@@ -85,6 +88,7 @@ int fUpdateLCD=0;
 unsigned char read_buffer[LENGTH_RBUFFER+1];
 unsigned char send_buffer[LENGTH_SBUFFER+1];
 void updateEvents();
+void putLCDEvents();
 //Flag to indicate when to update events in super loop
 int fUpdateEvents=0;
 
@@ -97,9 +101,15 @@ typedef struct{
 
 #define MAX_EVENTS 5
 int c_maxEvent = 0;
-int selected_event = 1;
+int selected_event = 0;
 //List of events
 Events events[MAX_EVENTS];
+
+/* Joystick */
+//Middle val of joystick
+#define MVAL_JOYSTICK 2000
+uint32_t val_joystick;
+uint32_t last_val_joystick;
 
 /* USER CODE END 0 */
 
@@ -134,6 +144,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_TIM2_Init();
   MX_TIM3_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
   /* LCD INIT */
@@ -148,37 +159,67 @@ int main(void)
   fUpdateLCD=1;
   fUpdateEvents=1;
 
-  updateEvents();
   //Start update events timmer
   HAL_TIM_Base_Start_IT(&htim2);
   //Start update LCD timmer
   HAL_TIM_Base_Start_IT(&htim3);
+
+  //Start ADC for controls
+  HAL_ADC_Start(&hadc1);
+  val_joystick = 0;
+  //Set las val to middle in joystick
+  last_val_joystick = MVAL_JOYSTICK;
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
+	  /* USER CODE END WHILE */
 
-    /* USER CODE BEGIN 3 */
+	  /* USER CODE BGEEGIN 3 */
 
-	  if (fUpdateLCD){
-		  updateLCD();
-		  fUpdateLCD=0;
+	  /*Code for Joystick*/
+	  HAL_ADC_Start(&hadc1);
+	  val_joystick = HAL_ADC_GetValue(&hadc1);
+
+	  //Move up
+	  if (last_val_joystick < MVAL_JOYSTICK+500 && val_joystick > MVAL_JOYSTICK+500){
+		  selected_event++;
+		  if (selected_event>=c_maxEvent)
+			  selected_event=c_maxEvent-1;
+		  putLCDEvents();
+		  fUpdateLCD=1;
 	  }
+	  //Move down
+	  else if (last_val_joystick > MVAL_JOYSTICK-500 && val_joystick < MVAL_JOYSTICK-500){
+		  selected_event--;
+		  if (selected_event<0)
+			  selected_event=0;
+		  putLCDEvents();
+		  fUpdateLCD=1;
+	  }
+	  last_val_joystick=val_joystick;
+
+
+	  /* Check for update flags */
 	  if (fUpdateEvents){
 		  updateEvents();
 		  fUpdateEvents=0;
 	  }
+	  if (fUpdateLCD){
+		  updateLCD();
+		  fUpdateLCD=0;
+	  }
 
 	  //Dummy code for button
-
 	  if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET){
 		  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
 	  }
 
 	  HAL_Delay(50);
+
   }
   /* USER CODE END 3 */
 }
@@ -222,6 +263,58 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV2;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.ScanConvMode = DISABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_0;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
 }
 
 /**
@@ -407,26 +500,26 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 void updateEvents(){
-  /* Load Info */
-  //Ask for info
-  memset(send_buffer,0,LENGTH_SBUFFER);
-  strcpy((char *) send_buffer,"e");
-  HAL_UART_Transmit(&huart2,send_buffer,LENGTH_SBUFFER,5000);
-  //Get info
-  memset(read_buffer,0,LENGTH_RBUFFER);
-  HAL_UART_Receive(&huart2, read_buffer, LENGTH_RBUFFER,5000);
-  /*
-   * Data format: summary_1\tdate_1\tsummary_2\tdate_2...
-   */
+	/* Load Info */
+	//Ask for info
+	memset(send_buffer,0,LENGTH_SBUFFER);
+	strcpy((char *) send_buffer,"e");
+	HAL_UART_Transmit(&huart2,send_buffer,LENGTH_SBUFFER,5000);
+	//Get info
+	memset(read_buffer,0,LENGTH_RBUFFER);
+	HAL_UART_Receive(&huart2, read_buffer, LENGTH_RBUFFER,5000);
+	/*
+	* Data format: summary_1\tdate_1\tsummary_2\tdate_2...
+	*/
 
-  //Process data
-  const int length_buffer = strlen((char *) read_buffer);
-  unsigned char *start_summary,*start_date;
-  unsigned char *end_date;
-  int final_summary_index,final_date_index;
+	//Process data
+	const int length_buffer = strlen((char *) read_buffer);
+	unsigned char *start_summary,*start_date;
+	unsigned char *end_date;
+	int final_summary_index,final_date_index;
 
-  //If data received
-  if (strlen((char *) read_buffer)>0){
+	//If data received
+	if (strlen((char *) read_buffer)>0){
 	  //start in read_buffer
 	  start_summary = read_buffer;
 	  for (c_maxEvent=0; c_maxEvent < MAX_EVENTS ;c_maxEvent++){
@@ -448,7 +541,7 @@ void updateEvents(){
 
 		  //Get lengths
 		  final_summary_index = (int)(start_date-start_summary);
-		  	  //If end_date was found then calculate length
+			  //If end_date was found then calculate length
 		  if (end_date!=0){
 			  final_date_index = (int)(end_date - start_date);
 		  }else{
@@ -457,8 +550,8 @@ void updateEvents(){
 		  }
 
 		  //Copy data to structure
-		  	  //Copy summary
-		  	  	  //Clean summary
+			  //Copy summary
+				  //Clean summary
 		  memset(events[c_maxEvent].summary,0,LCD_LENGTH);
 		  //Check to not pass over LCD_LENGTH
 		  if(LCD_LENGTH < final_summary_index){
@@ -466,7 +559,7 @@ void updateEvents(){
 		  }else{
 			  strncpy((char *) events[c_maxEvent].summary,(char *) start_summary,final_summary_index);
 		  }
-		  	  //Copy date
+			  //Copy date
 		  memset(events[c_maxEvent].date,0,LCD_LENGTH);
 		  if(LCD_LENGTH < final_date_index){
 			  strncpy((char *) events[c_maxEvent].date,(char *) (start_date+1),LCD_LENGTH);
@@ -483,32 +576,30 @@ void updateEvents(){
 			  break;
 		  }
 	  }
-  }
-  else{
+	}
+	else{
 	  //If no data received
 	  c_maxEvent=0;
-  }
-  //If selected event is greater than now updated max number of events received, then set selected to max
-  if (selected_event>c_maxEvent){
-	  selected_event=c_maxEvent;
-  }
+	}
+	//If selected event is greater than now updated max number of events received, then set selected to max
+	if (selected_event>=c_maxEvent){
+		if (c_maxEvent==0){
+			selected_event=0;
+		}else{
+			selected_event=c_maxEvent-1;
+		}
+	}
 
-  updateLCDStrings();
+	putLCDEvents();
 }
 
-void updateLCDStrings(){
+void updateLCDStrings(const char *s1,const char *s2){
 	//Clean LCD strings
 	memset(LCD_Text[0],0,LCD_LENGTH+1);
 	memset(LCD_Text[1],0,LCD_LENGTH+1);
 
-	//If got any events
-	if (c_maxEvent>0){
-		strcpy((char *) LCD_Text[0],(char *) events[selected_event].summary);
-		strcpy((char *) LCD_Text[1],(char *) events[selected_event].date);
-	}else{
-		strcpy(LCD_Text[0],"No events");
-		strcpy(LCD_Text[1],"Received!");
-	}
+	strcpy((char *) LCD_Text[0],s1);
+	strcpy((char *) LCD_Text[1],s2);
 
 	updateLCD();
 }
@@ -522,13 +613,21 @@ void updateLCD(){
 	LCD_String(&LCD,LCD_Text[1]);
 }
 
+void putLCDEvents(){
+	//If got any events
+	if (c_maxEvent>0){
+		updateLCDStrings((char *) events[selected_event].summary,(char *) events[selected_event].date);
+	}else{
+		updateLCDStrings("No events","Received!");
+	}
+}
+
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   // Check which version of the timer triggered this callback and toggle LED
   if (htim == &htim3){
 	 //Update only LCD
 	 fUpdateLCD=1;
-	 HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
   }
   if (htim == &htim2 )
   {
