@@ -76,11 +76,14 @@ static void MX_ADC1_Init(void);
 LCD_PinType LCD_DATA_PINS[] = {GPIO_PIN_13,GPIO_PIN_14,GPIO_PIN_15,GPIO_PIN_1};
 LCD_Struct_t LCD;
 //Text that goes to LCD when updating function is called
-char LCD_Text[2][LCD_LENGTH+1];
+char *LCD_Text[2];
 //Reprint in LCD
-void updateLCD();
+void LCDUpdate();
 //Update text in LCD
-void updateLCDStrings(const char *s1,const char *s2);
+void LCDPut(char *s1,char *s2);
+#define ANIAMATION_TIME 200
+void LCDAnimationDown(char *s1,char *s2);
+void LCDAnimationUp(char *s1,char *s2);
 //Flag to indicate when to update screen in super loop
 int fUpdateLCD=0;
 
@@ -90,7 +93,7 @@ int fUpdateLCD=0;
 unsigned char read_buffer[LENGTH_RBUFFER+1];
 unsigned char send_buffer[LENGTH_SBUFFER+1];
 void processBufferEvents();
-void putLCDEvents();
+void LCDPutEvents();
 //Flag to indicate when to update events in super loop
 int fUpdateEvents=0;
 
@@ -151,21 +154,19 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   /* LCD INIT */
-  HAL_Delay(1000);
+  HAL_Delay(500);
   LCD = LCD_Create(LCD_DATA_PORT, LCD_DATA_PINS, LCD_RSE_PORT, LCD_RS_PIN, LCD_RSE_PORT, LCD_E_PIN);
   HAL_Delay(500);
-  LCD_XY(&LCD,0,0);
-  HAL_Delay(500);
-  LCD_String(&LCD,"LOADING...");
+  LCDPut("LOADING...","");
+  LCDUpdate();
 
   /* get events */
-  fUpdateLCD=1;
   fUpdateEvents=1;
-
   //Start update events timmer
   HAL_TIM_Base_Start_IT(&htim2);
   //Start update LCD timmer
   HAL_TIM_Base_Start_IT(&htim3);
+  LCD_XY(&LCD,0,0);
 
   //Start ADC for controls
   HAL_ADC_Start(&hadc1);
@@ -192,19 +193,21 @@ int main(void)
 		  selected_event++;
 		  if (selected_event>=c_maxEvent)
 			  selected_event=c_maxEvent-1;
-		  putLCDEvents();
+		  else
+			  LCDAnimationDown((char *) events[selected_event].summary,(char *) events[selected_event].date);
 		  fUpdateLCD=1;
 	  }
+
 	  //Move down
 	  else if (last_val_joystick > MVAL_JOYSTICK-500 && val_joystick < MVAL_JOYSTICK-500){
 		  selected_event--;
 		  if (selected_event<0)
 			  selected_event=0;
-		  putLCDEvents();
+		  else
+			  LCDAnimationUp((char *) events[selected_event].summary,(char *) events[selected_event].date);
 		  fUpdateLCD=1;
 	  }
 	  last_val_joystick=val_joystick;
-
 
 	  /* Check for update flags */
 	  if (fUpdateEvents){
@@ -217,8 +220,9 @@ int main(void)
 		HAL_UART_Transmit_IT(&huart2,send_buffer,LENGTH_SBUFFER);
 		fUpdateEvents=0;
 	  }
+
 	  if (fUpdateLCD){
-		updateLCD();
+		LCDUpdate();
 		fUpdateLCD=0;
 	  }
 
@@ -228,7 +232,6 @@ int main(void)
 	  }
 
 	  HAL_Delay(50);
-
   }
   /* USER CODE END 3 */
 }
@@ -609,21 +612,16 @@ void processBufferEvents(){
 		}
 	}
 
-	putLCDEvents();
+	LCDPutEvents();
 }
 
-void updateLCDStrings(const char *s1,const char *s2){
-	//Clean LCD strings
-	memset(LCD_Text[0],0,LCD_LENGTH+1);
-	memset(LCD_Text[1],0,LCD_LENGTH+1);
-
-	strcpy((char *) LCD_Text[0],s1);
-	strcpy((char *) LCD_Text[1],s2);
-
-	fUpdateEvents=1;
+void LCDPut(char *s1,char *s2){
+	LCD_Text[0] = s1;
+	LCD_Text[1] = s2;
+	fUpdateLCD=1;
 }
 
-void updateLCD(){
+void LCDUpdate(){
 	//Update LCD
 	LCD_Command(&LCD, LCD_CLEAR_SCREEN);
 	LCD_XY(&LCD,0,0);
@@ -632,21 +630,44 @@ void updateLCD(){
 	LCD_String(&LCD,LCD_Text[1]);
 }
 
-void putLCDEvents(){
+void LCDPutEvents(){
 	//If got any events
 	if (c_maxEvent>0){
-		updateLCDStrings((char *) events[selected_event].summary,(char *) events[selected_event].date);
+		LCDPut((char *) events[selected_event].summary,(char *) events[selected_event].date);
 	}else{
-		updateLCDStrings("No events","Received!");
+		LCDPut("No events","Received!");
 	}
+}
+
+
+void LCDAnimationDown(char *s1,char *s2){
+	//Animation to new text using already put text in LCD
+	LCD_Text[1] = LCD_Text[0];
+	LCD_Text[0] = s2;
+	LCDUpdate();
+	HAL_Delay(ANIAMATION_TIME);
+	LCD_Text[0] = s1;
+	LCD_Text[1] = s2;
+	LCDUpdate();
+}
+
+void LCDAnimationUp(char *s1,char *s2){
+	//Animation to new text using already put text in LCD
+	LCD_Text[0] = LCD_Text[1];
+	LCD_Text[1] = s1;
+	LCDUpdate();
+	HAL_Delay(ANIAMATION_TIME);
+	LCD_Text[0] = s1;
+	LCD_Text[1] = s2;
+	LCDUpdate();
 }
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart){
 	if(huart->Instance==USART2){
 		//Get info
-		HAL_UART_DMAStop(&huart2);
+		//HAL_UART_DMAStop(&huart2);
 		HAL_UARTEx_ReceiveToIdle_DMA(&huart2, read_buffer, LENGTH_RBUFFER);
-		//Disable half data transfered
+		//Disable half data transfereds
 		__HAL_DMA_DISABLE_IT(&hdma_usart2_rx,DMA_IT_HT);
 	}
 }
@@ -655,12 +676,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   // Check which version of the timer triggered this callback and toggle LED
   if (htim == &htim3){
-	 //Update only LCD
+	 //Update only LCD text
 	 fUpdateLCD=1;
   }
   if (htim == &htim2 )
   {
-	//Update Events and LCD
+	//Update Events
     fUpdateEvents=1;
   }
 }
