@@ -84,7 +84,7 @@ char *LCD_Text[2];
 void LCDUpdate();
 //Update text in LCD
 void LCDPut(char *s1,char *s2);
-#define ANIAMATION_TIME 300
+#define ANIAMATION_TIME 200
 void LCDAnimationDown(char *s1,char *s2);
 void LCDAnimationUp(char *s1,char *s2);
 //Flag to indicate when to update screen in super loop
@@ -117,7 +117,7 @@ Events events[MAX_EVENTS];
 
 /* Joystick */
 //Middle val of joystick
-#define JOYSTICK_MIN_CHANGE		800
+#define JOYSTICK_MIN_CHANGE		1000
 #define JOYSTICK_MED_VAL		2000
 
 //Joystick val first index is up and down, second index is for left and right
@@ -135,8 +135,12 @@ void joystickCheckLR();
 void joystickCheckUD();
 
 const char DELETE_DIALOG[LCD_LENGTH+1] = "Delete event?";
-char delete_selector_diag[LCD_LENGTH+1] = "   Yes    (No)  ";
+const char delete_selector_diag_no[LCD_LENGTH+1] = "   Yes    (No)  ";
+const char delete_selector_diag_yes[LCD_LENGTH+1] = "  (Yes)    No   ";
+
 int onDeleteScreen = 0;
+int no_selected = 1;
+
 
 void LCDPutDelete();
 
@@ -203,7 +207,11 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	  joystickCheckUD();
+	  //If on delete event screen, cant move up and down to change selected event
+	  if (~onDeleteScreen){
+		  joystickCheckUD();
+	  }
+	  joystickCheckLR();
 
 	  /* Check for update flags */
 	  if (fUpdateEvents){
@@ -252,7 +260,12 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 16;
+  RCC_OscInitStruct.PLL.PLLN = 192;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -262,12 +275,12 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
   {
     Error_Handler();
   }
@@ -294,7 +307,7 @@ static void MX_ADC1_Init(void)
   /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
   */
   hadc1.Instance = ADC1;
-  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV2;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
   hadc1.Init.ScanConvMode = ENABLE;
   hadc1.Init.ContinuousConvMode = ENABLE;
@@ -356,7 +369,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 9999;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 30999;
+  htim2.Init.Period = 40999;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -414,7 +427,7 @@ static void MX_TIM3_Init(void)
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 9999;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 10999;
+  htim3.Init.Period = 30999;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
@@ -680,12 +693,13 @@ void processBufferEvents(){
 	}
 
 	LCDPutEvents();
+	//Only change flag and no update because update can not be called on interrupts (Because of delays implemented on LCD file)
+	fUpdateLCD=1;
 }
 
 void LCDPut(char *s1,char *s2){
 	LCD_Text[0] = s1;
 	LCD_Text[1] = s2;
-	fUpdateLCD=1;
 }
 
 void LCDUpdate(){
@@ -699,10 +713,12 @@ void LCDUpdate(){
 
 void LCDPutEvents(){
 	//If got any events
-	if (c_maxEvent>0){
-		LCDPut((char *) events[selected_event].summary,(char *) events[selected_event].date);
-	}else{
-		LCDPut("No events","Received!");
+	if (~onDeleteScreen){
+		if (c_maxEvent>0){
+			LCDPut((char *) events[selected_event].summary,(char *) events[selected_event].date);
+		}else{
+			LCDPut("No events","Received!");
+		}
 	}
 }
 
@@ -742,18 +758,36 @@ void LCDAnimationUp(char *s1,char *s2){
 }
 
 void LCDPutDelete(){
-	LCDPut(DELETE_DIALOG, delete_selector_diag);
-	LCDUpdate();
+	if (no_selected){
+		LCDPut(DELETE_DIALOG, delete_selector_diag_no);
+	}else{
+		LCDPut(DELETE_DIALOG, delete_selector_diag_yes);
+	}
 }
 
 void joystickCheckLR(){
+	/*Code for Joystick */
+
+	//Move Right
+	if (last_vals_joystick[1] < JOYSTICK_MED_VAL + JOYSTICK_MIN_CHANGE && vals_joystick[1] > JOYSTICK_MED_VAL + JOYSTICK_MIN_CHANGE){
+		joystickRight();
+	}
+
+	//Move left
+	else if (last_vals_joystick[1] > JOYSTICK_MED_VAL - JOYSTICK_MIN_CHANGE && vals_joystick[1] < JOYSTICK_MED_VAL- JOYSTICK_MIN_CHANGE){
+	  //Update selected event and update LCD text
+		joystickLeft();
+	}
+
+	//Update last joystick val
+	last_vals_joystick[1]=vals_joystick[1];
 }
 
 void joystickCheckUD(){
 	/*Code for Joystick */
 
 	//Move up
-	if (vals_joystick[0] < JOYSTICK_MED_VAL + JOYSTICK_MIN_CHANGE && vals_joystick[0] > JOYSTICK_MED_VAL + JOYSTICK_MIN_CHANGE){
+	if (last_vals_joystick[0] < JOYSTICK_MED_VAL + JOYSTICK_MIN_CHANGE && vals_joystick[0] > JOYSTICK_MED_VAL + JOYSTICK_MIN_CHANGE){
 	  //Change Event selected and update lcd
 	  joystickUp();
 
@@ -780,7 +814,7 @@ void joystickCheckUD(){
 	  HAL_TIM_Base_Stop(&htim4);
 	  fTimmerJoystick=0;
 	  HAL_TIM_Base_Start_IT(&htim4);
-	}else if (last_vals_joystick[0] < JOYSTICK_MED_VAL - JOYSTICK_MIN_CHANGE && fTimmerJoystick){
+	}else if (vals_joystick[0] < JOYSTICK_MED_VAL - JOYSTICK_MIN_CHANGE && fTimmerJoystick){
 	  //If joystick keeps down
 	  joystickDown();
 
@@ -804,13 +838,30 @@ void joystickUp(){
 
 void joystickLeft(){
 	if(c_maxEvent>0 && ~onDeleteScreen){
+		if (onDeleteScreen){
+			//If already on delete screen, move to left means select yes
+			no_selected=0;
+		}else{
+			//Change to delete screen and select no
+			onDeleteScreen = 1;
+			no_selected=1;
+		}
 		LCDPutDelete();
+		LCDUpdate();
 	}
 }
 
 void joystickRight(){
 	if (onDeleteScreen){
-		LCDPutEvents();
+		if (no_selected){
+			//If already no selected means exit of delete screen
+			onDeleteScreen = 0;
+			LCDPutEvents();
+		}else{
+			no_selected = 1;
+			LCDPutDelete();
+		}
+		LCDUpdate();
 	}
 }
 
