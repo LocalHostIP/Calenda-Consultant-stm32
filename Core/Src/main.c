@@ -40,9 +40,11 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
 
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim4;
 
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
@@ -59,6 +61,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_ADC1_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -81,11 +84,13 @@ char *LCD_Text[2];
 void LCDUpdate();
 //Update text in LCD
 void LCDPut(char *s1,char *s2);
-#define ANIAMATION_TIME 200
+#define ANIAMATION_TIME 300
 void LCDAnimationDown(char *s1,char *s2);
 void LCDAnimationUp(char *s1,char *s2);
 //Flag to indicate when to update screen in super loop
 int fUpdateLCD=0;
+#define LCD_DIVISION_LINE 		" _____________ "
+
 
 /* USART2 Variables */
 #define LENGTH_RBUFFER 300
@@ -100,8 +105,8 @@ int fUpdateEvents=0;
 //Events
 //Struct to save summary and date of all events
 typedef struct{
-	unsigned char summary[LCD_LENGTH+1];
-	unsigned char date[LCD_LENGTH+1];
+	char summary[LCD_LENGTH+1];
+	char date[LCD_LENGTH+1];
 }Events;
 
 #define MAX_EVENTS 5
@@ -112,9 +117,28 @@ Events events[MAX_EVENTS];
 
 /* Joystick */
 //Middle val of joystick
-#define MVAL_JOYSTICK 2000
-uint32_t val_joystick;
-uint32_t last_val_joystick;
+#define JOYSTICK_MIN_CHANGE		800
+#define JOYSTICK_MED_VAL		2000
+
+//Joystick val first index is up and down, second index is for left and right
+uint32_t vals_joystick[2] = {JOYSTICK_MED_VAL,JOYSTICK_MED_VAL};
+uint32_t last_vals_joystick[2] = {JOYSTICK_MED_VAL,JOYSTICK_MED_VAL};
+
+//Set joystick previos val to middle val
+
+int fTimmerJoystick = 0;
+void joystickUp();
+void joystickDown();
+void joystickLeft();
+void joystickRight();
+void joystickCheckLR();
+void joystickCheckUD();
+
+const char DELETE_DIALOG[LCD_LENGTH+1] = "Delete event?";
+char delete_selector_diag[LCD_LENGTH+1] = "   Yes    (No)  ";
+int onDeleteScreen = 0;
+
+void LCDPutDelete();
 
 /* USER CODE END 0 */
 
@@ -151,6 +175,7 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   MX_ADC1_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 
   /* LCD INIT */
@@ -167,13 +192,7 @@ int main(void)
   //Start update LCD timmer
   HAL_TIM_Base_Start_IT(&htim3);
   LCD_XY(&LCD,0,0);
-
-  //Start ADC for controls
-  HAL_ADC_Start(&hadc1);
-  val_joystick = 0;
-  //Set las val to middle in joystick
-  last_val_joystick = MVAL_JOYSTICK;
-
+  HAL_ADC_Start_DMA(&hadc1,vals_joystick,2);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -184,30 +203,7 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	  /*Code for Joystick */
-	  HAL_ADC_Start(&hadc1);
-	  val_joystick = HAL_ADC_GetValue(&hadc1);
-
-	  //Move up
-	  if (last_val_joystick < MVAL_JOYSTICK+500 && val_joystick > MVAL_JOYSTICK+500){
-		  selected_event++;
-		  if (selected_event>=c_maxEvent)
-			  selected_event=c_maxEvent-1;
-		  else
-			  LCDAnimationDown((char *) events[selected_event].summary,(char *) events[selected_event].date);
-		  fUpdateLCD=1;
-	  }
-
-	  //Move down
-	  else if (last_val_joystick > MVAL_JOYSTICK-500 && val_joystick < MVAL_JOYSTICK-500){
-		  selected_event--;
-		  if (selected_event<0)
-			  selected_event=0;
-		  else
-			  LCDAnimationUp((char *) events[selected_event].summary,(char *) events[selected_event].date);
-		  fUpdateLCD=1;
-	  }
-	  last_val_joystick=val_joystick;
+	  joystickCheckUD();
 
 	  /* Check for update flags */
 	  if (fUpdateEvents){
@@ -300,14 +296,14 @@ static void MX_ADC1_Init(void)
   hadc1.Instance = ADC1;
   hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV2;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
-  hadc1.Init.ScanConvMode = DISABLE;
+  hadc1.Init.ScanConvMode = ENABLE;
   hadc1.Init.ContinuousConvMode = ENABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 1;
-  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.NbrOfConversion = 2;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
@@ -318,7 +314,16 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_84CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_1;
+  sConfig.Rank = 2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -446,6 +451,64 @@ static void MX_TIM3_Init(void)
 }
 
 /**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 9999;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 2999;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_OC_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_TIMING;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_OC_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -486,11 +549,15 @@ static void MX_DMA_Init(void)
 
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
 
 }
 
@@ -505,6 +572,7 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
@@ -533,7 +601,6 @@ void processBufferEvents(){
 	 * Save received buffer to array of structures of events
 	* Data format: summary_1\tdate_1\tsummary_2\tdate_2...
 	*/
-
 	//Process data
 	const int length_buffer = strlen((char *) read_buffer);
 	unsigned char *start_summary,*start_date;
@@ -643,9 +710,15 @@ void LCDPutEvents(){
 void LCDAnimationDown(char *s1,char *s2){
 	//Animation to new text using already put text in LCD
 	LCD_Text[1] = LCD_Text[0];
-	LCD_Text[0] = s2;
+	LCD_Text[0] = LCD_DIVISION_LINE;
 	LCDUpdate();
 	HAL_Delay(ANIAMATION_TIME);
+
+	LCD_Text[0] = s2;
+	LCD_Text[1] = LCD_DIVISION_LINE;
+	LCDUpdate();
+	HAL_Delay(ANIAMATION_TIME);
+
 	LCD_Text[0] = s1;
 	LCD_Text[1] = s2;
 	LCDUpdate();
@@ -654,12 +727,99 @@ void LCDAnimationDown(char *s1,char *s2){
 void LCDAnimationUp(char *s1,char *s2){
 	//Animation to new text using already put text in LCD
 	LCD_Text[0] = LCD_Text[1];
+	LCD_Text[1] = LCD_DIVISION_LINE;
+	LCDUpdate();
+	HAL_Delay(ANIAMATION_TIME);
+
+	LCD_Text[0] = LCD_DIVISION_LINE;
 	LCD_Text[1] = s1;
 	LCDUpdate();
 	HAL_Delay(ANIAMATION_TIME);
+
 	LCD_Text[0] = s1;
 	LCD_Text[1] = s2;
 	LCDUpdate();
+}
+
+void LCDPutDelete(){
+	LCDPut(DELETE_DIALOG, delete_selector_diag);
+	LCDUpdate();
+}
+
+void joystickCheckLR(){
+}
+
+void joystickCheckUD(){
+	/*Code for Joystick */
+
+	//Move up
+	if (vals_joystick[0] < JOYSTICK_MED_VAL + JOYSTICK_MIN_CHANGE && vals_joystick[0] > JOYSTICK_MED_VAL + JOYSTICK_MIN_CHANGE){
+	  //Change Event selected and update lcd
+	  joystickUp();
+
+	  //Start Joystick timmer
+	  HAL_TIM_Base_Stop(&htim4);
+	  fTimmerJoystick=0;
+	  HAL_TIM_Base_Start_IT(&htim4);
+	}else if(vals_joystick[0] > JOYSTICK_MED_VAL + JOYSTICK_MIN_CHANGE && fTimmerJoystick){
+	  //If keeps joystick up
+	  joystickUp();
+
+	  //Start Joystick timmer
+	  HAL_TIM_Base_Stop(&htim4);
+	  fTimmerJoystick=0;
+	  HAL_TIM_Base_Start_IT(&htim4);
+	}
+
+	//Move down
+	else if (last_vals_joystick[0] > JOYSTICK_MED_VAL - JOYSTICK_MIN_CHANGE && vals_joystick[0] < JOYSTICK_MED_VAL- JOYSTICK_MIN_CHANGE){
+	  //Update selected event and update LCD text
+	  joystickDown();
+
+	  //Start Joystick timmer
+	  HAL_TIM_Base_Stop(&htim4);
+	  fTimmerJoystick=0;
+	  HAL_TIM_Base_Start_IT(&htim4);
+	}else if (last_vals_joystick[0] < JOYSTICK_MED_VAL - JOYSTICK_MIN_CHANGE && fTimmerJoystick){
+	  //If joystick keeps down
+	  joystickDown();
+
+	  //Start Joystick timmer
+	  HAL_TIM_Base_Stop(&htim4);
+	  fTimmerJoystick=0;
+	  HAL_TIM_Base_Start_IT(&htim4);
+	}
+
+	//Update last joystick val
+	last_vals_joystick[0]=vals_joystick[0];
+}
+
+void joystickUp(){
+	selected_event++;
+	if (selected_event>=c_maxEvent)
+	  selected_event=c_maxEvent-1;
+	else
+	  LCDAnimationDown(events[selected_event].summary,events[selected_event].date);
+}
+
+void joystickLeft(){
+	if(c_maxEvent>0 && ~onDeleteScreen){
+		LCDPutDelete();
+	}
+}
+
+void joystickRight(){
+	if (onDeleteScreen){
+		LCDPutEvents();
+	}
+}
+
+void joystickDown(){
+	selected_event--;
+	if (selected_event<0)
+	  selected_event=0;
+	else
+	  LCDAnimationUp(events[selected_event].summary,events[selected_event].date);
 }
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart){
@@ -674,15 +834,21 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart){
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-  // Check which version of the timer triggered this callback and toggle LED
+  //Timmer for LCD
   if (htim == &htim3){
 	 //Update only LCD text
 	 fUpdateLCD=1;
   }
+  //Timmer for Update events
   if (htim == &htim2 )
   {
 	//Update Events
     fUpdateEvents=1;
+  }
+
+  //Timmer for Joystick
+  if (htim == &htim4){
+	  fTimmerJoystick=1;
   }
 }
 
