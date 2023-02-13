@@ -84,13 +84,15 @@ char *LCD_Text[2];
 void LCDUpdate();
 void LCDPut(const char *s1,const char *s2);
 void LCDPutEvents();
-void LCDPutDelete();
+//If parameter is set to 1, only puts menu selector for yes and no (this improves visual)
+void LCDPutDelete(int);
 void LCDAnimationDown(char *s1,char *s2);
 void LCDAnimationUp(char *s1,char *s2);
 //Flag to indicate when to update screen in super loop
 int fUpdateLCD=0;
 #define LCD_DIVISION_LINE 		"  ___________  "
 #define ANIAMATION_TIME 200
+#define WITH_ANIMATION					0
 
 //Delete Menu variables
 const char DELETE_DIALOG[LCD_LENGTH+1] = "Delete event?";
@@ -107,7 +109,6 @@ void processBufferEvents();
 #define TX_DELETE 		'D';
 unsigned char read_buffer[LENGTH_RBUFFER+1];
 unsigned char send_buffer[LENGTH_SBUFFER+1];
-
 
 /*-------------------------------- Events ------------------------ */
 #define MAX_EVENTS 5
@@ -243,8 +244,9 @@ int main(void)
 
 		send_buffer[0] = TX_UPDATE;
 		send_buffer[1] = '-';
-		HAL_UART_Transmit_IT(&huart2,send_buffer,LENGTH_SBUFFER);
+
 		fUpdateEvents=0;
+		HAL_UART_Transmit_IT(&huart2,send_buffer,LENGTH_SBUFFER);
 	  }
 	  //Update LCD
 
@@ -394,7 +396,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 9999;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 90999;
+  htim2.Init.Period = 60999;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -766,44 +768,67 @@ void LCDPutEvents(){
 
 
 void LCDAnimationDown(char *s1,char *s2){
-	//Animation to new text using already put text in LCD
-	LCD_Text[1] = LCD_Text[0];
-	LCD_Text[0] = LCD_DIVISION_LINE;
-	LCDUpdate();
-	HAL_Delay(ANIAMATION_TIME);
+	if (WITH_ANIMATION){
+		//Animation to new text using already put text in LCD
+		LCD_Text[1] = LCD_Text[0];
+		LCD_Text[0] = LCD_DIVISION_LINE;
+		LCDUpdate();
+		HAL_Delay(ANIAMATION_TIME);
 
-	LCD_Text[0] = s2;
-	LCD_Text[1] = LCD_DIVISION_LINE;
-	LCDUpdate();
-	HAL_Delay(ANIAMATION_TIME);
+		LCD_Text[0] = s2;
+		LCD_Text[1] = LCD_DIVISION_LINE;
+		LCDUpdate();
+		HAL_Delay(ANIAMATION_TIME);
 
-	LCD_Text[0] = s1;
-	LCD_Text[1] = s2;
-	LCDUpdate();
+		LCD_Text[0] = s1;
+		LCD_Text[1] = s2;
+		LCDUpdate();
+	}else{
+		LCD_Text[0] = s1;
+		LCD_Text[1] = s2;
+		LCDUpdate();
+	}
 }
 
 void LCDAnimationUp(char *s1,char *s2){
-	//Animation to new text using already put text in LCD
-	LCD_Text[0] = LCD_Text[1];
-	LCD_Text[1] = LCD_DIVISION_LINE;
-	LCDUpdate();
-	HAL_Delay(ANIAMATION_TIME);
+	if (WITH_ANIMATION){
+		//Animation to new text using already put text in LCD
+		LCD_Text[0] = LCD_Text[1];
+		LCD_Text[1] = LCD_DIVISION_LINE;
+		LCDUpdate();
+		HAL_Delay(ANIAMATION_TIME);
 
-	LCD_Text[0] = LCD_DIVISION_LINE;
-	LCD_Text[1] = s1;
-	LCDUpdate();
-	HAL_Delay(ANIAMATION_TIME);
+		LCD_Text[0] = LCD_DIVISION_LINE;
+		LCD_Text[1] = s1;
+		LCDUpdate();
+		HAL_Delay(ANIAMATION_TIME);
 
-	LCD_Text[0] = s1;
-	LCD_Text[1] = s2;
-	LCDUpdate();
+		LCD_Text[0] = s1;
+		LCD_Text[1] = s2;
+		LCDUpdate();
+	}else{
+		LCD_Text[0] = s1;
+		LCD_Text[1] = s2;
+		LCDUpdate();
+	}
 }
 
-void LCDPutDelete(){
-	if (no_selected){
-		LCDPut(DELETE_DIALOG, delete_selector_diag_no);
+void LCDPutDelete(int onlyUpdateMenu){
+	if (onlyUpdateMenu){
+		if (no_selected){
+			LCD_Text[1]=(DELETE_DIALOG, delete_selector_diag_no);
+
+		}else{
+			LCD_Text[1]=(DELETE_DIALOG, delete_selector_diag_yes);
+		}
+		LCD_XY(&LCD,1,0);
+		LCD_String(&LCD,LCD_Text[1]);
 	}else{
-		LCDPut(DELETE_DIALOG, delete_selector_diag_yes);
+		if (no_selected){
+			LCDPut(DELETE_DIALOG, delete_selector_diag_no);
+		}else{
+			LCDPut(DELETE_DIALOG, delete_selector_diag_yes);
+		}
 	}
 }
 
@@ -885,13 +910,13 @@ void joystickLeft(){
 		if (onDeleteScreen){
 			//If already on delete screen, move to left means select yes
 			no_selected=0;
-			LCDPutDelete();
+			LCDPutDelete(1);
 			LCDUpdate();
 		}else{
 			//Change to delete screen and select no
 			onDeleteScreen = 1;
 			no_selected=1;
-			LCDPutDelete();
+			LCDPutDelete(0);
 			LCDUpdate();
 		}
 	}
@@ -905,7 +930,7 @@ void joystickRight(){
 			LCDPutEvents();
 		}else{
 			no_selected = 1;
-			LCDPutDelete();
+			LCDPutDelete(1);
 		}
 		LCDUpdate();
 	}
@@ -937,7 +962,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   //Timmer for LCD
   if (htim == &htim3){
 	 //Update only LCD text
-	 fUpdateLCD=1;
+	 //fUpdateLCD=1;
   }
   //Timmer for Update events
   if (htim == &htim2 )
