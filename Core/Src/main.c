@@ -69,7 +69,7 @@ static void MX_TIM4_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-/* LCD */
+/*-------------------------------- LCD ------------------------ */
 #define LCD_DATA_PORT 		GPIOB
 #define LCD_RSE_PORT 		GPIOC
 #define LCD_RS_PIN 			GPIO_PIN_8
@@ -82,67 +82,69 @@ LCD_Struct_t LCD;
 char *LCD_Text[2];
 //Reprint in LCD
 void LCDUpdate();
-//Update text in LCD
-void LCDPut(char *s1,char *s2);
-#define ANIAMATION_TIME 200
+void LCDPut(const char *s1,const char *s2);
+void LCDPutEvents();
+void LCDPutDelete();
 void LCDAnimationDown(char *s1,char *s2);
 void LCDAnimationUp(char *s1,char *s2);
 //Flag to indicate when to update screen in super loop
 int fUpdateLCD=0;
-#define LCD_DIVISION_LINE 		" _____________ "
+#define LCD_DIVISION_LINE 		"  ___________  "
+#define ANIAMATION_TIME 200
 
+//Delete Menu variables
+const char DELETE_DIALOG[LCD_LENGTH+1] = "Delete event?";
+const char delete_selector_diag_no[LCD_LENGTH+1] = "   Yes   (No)   ";
+const char delete_selector_diag_yes[LCD_LENGTH+1] = "  (Yes)   No    ";
+int onDeleteScreen = 0;
+int no_selected = 1;
 
-/* USART2 Variables */
+/*-------------------------------- USART ------------------------ */
+void processBufferEvents();
 #define LENGTH_RBUFFER 300
-#define LENGTH_SBUFFER 1
+#define LENGTH_SBUFFER 2
+#define TX_UPDATE 		'E';
+#define TX_DELETE 		'D';
 unsigned char read_buffer[LENGTH_RBUFFER+1];
 unsigned char send_buffer[LENGTH_SBUFFER+1];
-void processBufferEvents();
-void LCDPutEvents();
-//Flag to indicate when to update events in super loop
-int fUpdateEvents=0;
 
-//Events
+
+/*-------------------------------- Events ------------------------ */
+#define MAX_EVENTS 5
 //Struct to save summary and date of all events
 typedef struct{
 	char summary[LCD_LENGTH+1];
 	char date[LCD_LENGTH+1];
 }Events;
-
-#define MAX_EVENTS 5
-int c_maxEvent = 0;
-int selected_event = 0;
 //List of events
 Events events[MAX_EVENTS];
 
-/* Joystick */
-//Middle val of joystick
+//Current amount of events received
+int c_maxEvent = 0;
+//Event selected to print on scren
+int selected_event = 0;
+//Flag to indicate when to update events in super loop
+int fUpdateEvents=0;
+
+void deleteEvent();
+
+/*-------------------------------- Joystick ------------------------ */
 #define JOYSTICK_MIN_CHANGE		1000
 #define JOYSTICK_MED_VAL		2000
 
 //Joystick val first index is up and down, second index is for left and right
+//Set joystick previos val to middle val
 uint32_t vals_joystick[2] = {JOYSTICK_MED_VAL,JOYSTICK_MED_VAL};
 uint32_t last_vals_joystick[2] = {JOYSTICK_MED_VAL,JOYSTICK_MED_VAL};
 
-//Set joystick previos val to middle val
-
-int fTimmerJoystick = 0;
+//Flag that indicates if joystick has keep on the same enough time to make action again
+int fTimmerJoystickUD = 0;
 void joystickUp();
 void joystickDown();
 void joystickLeft();
 void joystickRight();
 void joystickCheckLR();
 void joystickCheckUD();
-
-const char DELETE_DIALOG[LCD_LENGTH+1] = "Delete event?";
-const char delete_selector_diag_no[LCD_LENGTH+1] = "   Yes    (No)  ";
-const char delete_selector_diag_yes[LCD_LENGTH+1] = "  (Yes)    No   ";
-
-int onDeleteScreen = 0;
-int no_selected = 1;
-
-
-void LCDPutDelete();
 
 /* USER CODE END 0 */
 
@@ -197,6 +199,7 @@ int main(void)
   HAL_TIM_Base_Start_IT(&htim3);
   LCD_XY(&LCD,0,0);
   HAL_ADC_Start_DMA(&hadc1,vals_joystick,2);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -207,28 +210,50 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
+	  /* --------------------- Joystick --------------- */
 	  //If on delete event screen, cant move up and down to change selected event
-	  if (~onDeleteScreen){
+	  if (onDeleteScreen==0){
 		  joystickCheckUD();
 	  }
 	  joystickCheckLR();
 
-	  /* Check for update flags */
+	  /* --------------------- Check for delete event --------------- */
+
+	  if (HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_0) == GPIO_PIN_RESET && onDeleteScreen){
+		  if (no_selected){
+			  onDeleteScreen=0;
+			  LCDPutEvents();
+			  LCDUpdate();
+		  }else{
+			  deleteEvent();
+			  fUpdateEvents=1;
+			  onDeleteScreen=0;
+			  no_selected=1;
+			  LCDPutEvents();
+			  LCDUpdate();
+		  }
+	  }
+
+	  /* --------------------- Check for update Flags --------------- */
+	  //Update Events
 	  if (fUpdateEvents){
 		//Ask for info
 		//Clean buffers
-		memset(send_buffer,0,LENGTH_SBUFFER);
 		memset(read_buffer,0,LENGTH_RBUFFER);
 
-		strcpy((char *) send_buffer,"e");
+		send_buffer[0] = TX_UPDATE;
+		send_buffer[1] = '-';
 		HAL_UART_Transmit_IT(&huart2,send_buffer,LENGTH_SBUFFER);
 		fUpdateEvents=0;
 	  }
+	  //Update LCD
 
 	  if (fUpdateLCD){
 		LCDUpdate();
 		fUpdateLCD=0;
 	  }
+
+	  /* --------------------- Test --------------- */
 
 	  //Dummy code for button
 	  if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET){
@@ -369,7 +394,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 9999;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 40999;
+  htim2.Init.Period = 90999;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -485,7 +510,7 @@ static void MX_TIM4_Init(void)
   htim4.Instance = TIM4;
   htim4.Init.Prescaler = 9999;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 2999;
+  htim4.Init.Period = 4999;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
@@ -587,6 +612,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
@@ -604,9 +630,17 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PB0 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
 }
 
 /* USER CODE BEGIN 4 */
+
+/*-------------------------------- Events ------------------------ */
 
 void processBufferEvents(){
 
@@ -697,7 +731,15 @@ void processBufferEvents(){
 	fUpdateLCD=1;
 }
 
-void LCDPut(char *s1,char *s2){
+void deleteEvent(){
+	send_buffer[0] = TX_DELETE;
+	send_buffer[1] = '0'+selected_event;
+	HAL_UART_Transmit(&huart2,send_buffer, LENGTH_SBUFFER, 5000);
+}
+
+/*-------------------------------- LCD ------------------------ */
+
+void LCDPut(const char *s1,const char *s2){
 	LCD_Text[0] = s1;
 	LCD_Text[1] = s2;
 }
@@ -713,7 +755,7 @@ void LCDUpdate(){
 
 void LCDPutEvents(){
 	//If got any events
-	if (~onDeleteScreen){
+	if (onDeleteScreen==0){
 		if (c_maxEvent>0){
 			LCDPut((char *) events[selected_event].summary,(char *) events[selected_event].date);
 		}else{
@@ -765,6 +807,8 @@ void LCDPutDelete(){
 	}
 }
 
+/*-------------------------------- Joystick ------------------------ */
+
 void joystickCheckLR(){
 	/*Code for Joystick */
 
@@ -793,15 +837,15 @@ void joystickCheckUD(){
 
 	  //Start Joystick timmer
 	  HAL_TIM_Base_Stop(&htim4);
-	  fTimmerJoystick=0;
+	  fTimmerJoystickUD=0;
 	  HAL_TIM_Base_Start_IT(&htim4);
-	}else if(vals_joystick[0] > JOYSTICK_MED_VAL + JOYSTICK_MIN_CHANGE && fTimmerJoystick){
+	}else if(vals_joystick[0] > JOYSTICK_MED_VAL + JOYSTICK_MIN_CHANGE && fTimmerJoystickUD){
 	  //If keeps joystick up
 	  joystickUp();
 
 	  //Start Joystick timmer
 	  HAL_TIM_Base_Stop(&htim4);
-	  fTimmerJoystick=0;
+	  fTimmerJoystickUD=0;
 	  HAL_TIM_Base_Start_IT(&htim4);
 	}
 
@@ -812,15 +856,15 @@ void joystickCheckUD(){
 
 	  //Start Joystick timmer
 	  HAL_TIM_Base_Stop(&htim4);
-	  fTimmerJoystick=0;
+	  fTimmerJoystickUD=0;
 	  HAL_TIM_Base_Start_IT(&htim4);
-	}else if (vals_joystick[0] < JOYSTICK_MED_VAL - JOYSTICK_MIN_CHANGE && fTimmerJoystick){
+	}else if (vals_joystick[0] < JOYSTICK_MED_VAL - JOYSTICK_MIN_CHANGE && fTimmerJoystickUD){
 	  //If joystick keeps down
 	  joystickDown();
 
 	  //Start Joystick timmer
 	  HAL_TIM_Base_Stop(&htim4);
-	  fTimmerJoystick=0;
+	  fTimmerJoystickUD=0;
 	  HAL_TIM_Base_Start_IT(&htim4);
 	}
 
@@ -837,17 +881,19 @@ void joystickUp(){
 }
 
 void joystickLeft(){
-	if(c_maxEvent>0 && ~onDeleteScreen){
+	if(c_maxEvent>0){
 		if (onDeleteScreen){
 			//If already on delete screen, move to left means select yes
 			no_selected=0;
+			LCDPutDelete();
+			LCDUpdate();
 		}else{
 			//Change to delete screen and select no
 			onDeleteScreen = 1;
 			no_selected=1;
+			LCDPutDelete();
+			LCDUpdate();
 		}
-		LCDPutDelete();
-		LCDUpdate();
 	}
 }
 
@@ -873,10 +919,13 @@ void joystickDown(){
 	  LCDAnimationUp(events[selected_event].summary,events[selected_event].date);
 }
 
+/*-------------------------------- Interrupts ------------------------ */
+
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart){
 	if(huart->Instance==USART2){
 		//Get info
 		//HAL_UART_DMAStop(&huart2);
+		HAL_GPIO_TogglePin(GPIOA,GPIO_PIN_5);
 		HAL_UARTEx_ReceiveToIdle_DMA(&huart2, read_buffer, LENGTH_RBUFFER);
 		//Disable half data transfereds
 		__HAL_DMA_DISABLE_IT(&hdma_usart2_rx,DMA_IT_HT);
@@ -899,7 +948,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
   //Timmer for Joystick
   if (htim == &htim4){
-	  fTimmerJoystick=1;
+	  fTimmerJoystickUD=1;
   }
 }
 
